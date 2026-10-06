@@ -50,6 +50,7 @@
 #include "adb_utils.h"
 #include "daemon/property_monitor.h"
 #include "daemon/usb_ffs.h"
+#include "daemon/usb_legacy.h"
 #include "sysdeps/chrono.h"
 #include "transfer_id.h"
 #include "transport.h"
@@ -767,6 +768,19 @@ static void usb_ffs_open_thread() {
     }
 }
 
+// Selects the blocking FunctionFS transport. "persist.adb.nonblocking_ffs" overrides
+// "ro.adb.nonblocking_ffs"; both default to true, which selects the AIO transport. A false value
+// selects the transport for kernels whose f_fs lacks aio_read/aio_write.
+static bool usb_use_aio_transport() {
+    return android::base::GetBoolProperty(
+            "persist.adb.nonblocking_ffs",
+            android::base::GetBoolProperty("ro.adb.nonblocking_ffs", true));
+}
+
 void usb_init() {
-    std::thread(usb_ffs_open_thread).detach();
+    if (usb_use_aio_transport()) {
+        std::thread(usb_ffs_open_thread).detach();
+    } else {
+        usb_init_legacy();
+    }
 }
