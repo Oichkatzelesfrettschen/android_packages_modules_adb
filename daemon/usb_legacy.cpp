@@ -81,6 +81,9 @@ struct AioBlock {
     std::vector<struct iocb> iocb;
     std::vector<struct iocb*> iocbs;
     std::vector<struct io_event> events;
+    // Target of the ZLP iocb, apart from the caller's buffer, so a host that sends data in
+    // place of the ZLP fills this buffer rather than memory past the caller's allocation.
+    std::vector<char> zlp;
     aio_context_t ctx = 0;
 };
 
@@ -199,10 +202,8 @@ struct UsbLegacyConnection : public BlockingConnection {
                 D("read failed (fd=%d): %s", bulk_out_.get(), strerror(errno));
                 return -1;
             }
-            if (n == 0) {
-                errno = ECONNRESET;
-                return -1;
-            }
+            // A zero-length read is the host's ZLP after a transfer that ended on a packet
+            // boundary; it carries no data, and the next read returns the following transfer.
             buf += n;
             len -= n;
         }
@@ -253,7 +254,8 @@ struct UsbLegacyConnection : public BlockingConnection {
             cur += buf_len;
         }
         if (read && len != 0 && len % packet_size == 0) {
-            io_prep(&aiob->iocb[num_bufs], fd, cur, packet_size, 0, read);
+            aiob->zlp.resize(packet_size);
+            io_prep(&aiob->iocb[num_bufs], fd, aiob->zlp.data(), packet_size, 0, read);
             ++num_bufs;
         }
 
